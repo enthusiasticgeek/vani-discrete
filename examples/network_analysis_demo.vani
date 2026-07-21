@@ -1,0 +1,47 @@
+// Analyzes a small directed network three ways: all-pairs shortest paths
+// (Floyd-Warshall), strongly-connected components (Kosaraju), and max-flow
+// / min-cut (Edmonds-Karp) between two chosen nodes.
+//
+// Run with:  vanic run examples/network_analysis_demo.vani
+
+use "../src/lib.vani";
+
+fn main() -> i64 {
+    let n: i64 = 5;
+    let adj: Vec<f64> = disc_adj_new(n);
+    disc_adj_add_edge(mut ref adj, n, 0, 1, 2.0);
+    disc_adj_add_edge(mut ref adj, n, 1, 2, 3.0);
+    disc_adj_add_edge(mut ref adj, n, 2, 0, 4.0);   // closes a cycle 0-1-2
+    disc_adj_add_edge(mut ref adj, n, 1, 3, 5.0);
+    disc_adj_add_edge(mut ref adj, n, 3, 4, 1.0);
+
+    print "shortest distances from node 0 to every other node:";
+    let dist: Vec<f64> = disc_floyd_warshall(ref adj, n);
+    let j: i64 = 0;
+    while j < n {
+        print j, dist[0 * n + j];
+        j = j + 1;
+    }
+
+    print "strongly-connected component id per node (0,1,2 form a cycle):";
+    let comp: Vec<i64> = disc_scc_kosaraju(ref adj, n);
+    j = 0;
+    while j < n {
+        print j, comp[j];
+        j = j + 1;
+    }
+
+    print "max flow from node 0 to node 4:";
+    let result: MaxFlowResult = disc_max_flow(ref adj, n, 0, 4);
+    print result.flow;
+
+    let side: Vec<i64> = disc_min_cut_nodes(ref result.residual, n, 0);
+    print "min-cut source-side membership (1 = same side as node 0):";
+    j = 0;
+    while j < n {
+        print j, side[j];
+        j = j + 1;
+    }
+
+    return 0;
+}

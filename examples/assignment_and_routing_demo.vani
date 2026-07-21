@@ -1,0 +1,73 @@
+// Two classic combinatorial problems:
+//   1. Assign 3 workers to 3 tasks via bipartite matching, given which
+//      worker can do which task.
+//   2. Brute-force the shortest round trip visiting 4 cities, by
+//      enumerating every permutation of visit order with
+//      disc_next_permutation and keeping the cheapest.
+//
+// Run with:  vanic run examples/assignment_and_routing_demo.vani
+
+use "../src/lib.vani";
+
+fn main() -> i64 {
+    // ── 1. Worker-task assignment ─────────────────────────────────────────
+    let n_workers: i64 = 3;
+    let n_tasks: i64 = 3;
+    let inf: f64 = f64_inf();
+    // worker 0 can do tasks 0,1; worker 1 can do task 1 only;
+    // worker 2 can do tasks 1,2.
+    let can_do: Vec<f64> = vec();
+    push(mut ref can_do, 1.0); push(mut ref can_do, 1.0); push(mut ref can_do, inf);
+    push(mut ref can_do, inf); push(mut ref can_do, 1.0); push(mut ref can_do, inf);
+    push(mut ref can_do, inf); push(mut ref can_do, 1.0); push(mut ref can_do, 1.0);
+
+    let assignment: Vec<i64> = disc_bipartite_matching(ref can_do, n_workers, n_tasks);
+    print "task -> assigned worker (-1 = unassigned):";
+    let t: i64 = 0;
+    while t < n_tasks {
+        print t, assignment[t];
+        t = t + 1;
+    }
+
+    // ── 2. Brute-force shortest round trip over 4 cities ─────────────────
+    let n_cities: i64 = 4;
+    let dist: Vec<f64> = vec();
+    push(mut ref dist, 0.0); push(mut ref dist, 10.0); push(mut ref dist, 15.0); push(mut ref dist, 20.0);
+    push(mut ref dist, 10.0); push(mut ref dist, 0.0); push(mut ref dist, 35.0); push(mut ref dist, 25.0);
+    push(mut ref dist, 15.0); push(mut ref dist, 35.0); push(mut ref dist, 0.0); push(mut ref dist, 30.0);
+    push(mut ref dist, 20.0); push(mut ref dist, 25.0); push(mut ref dist, 30.0); push(mut ref dist, 0.0);
+
+    // Fix city 0 as the start; permute the remaining 3 cities.
+    let route: Vec<i64> = vec();
+    push(mut ref route, 1); push(mut ref route, 2); push(mut ref route, 3);
+
+    let best_cost: f64 = f64_inf();
+    let best_route: Vec<i64> = vec();
+
+    let evaluating: bool = true;
+    while evaluating {
+        let cost: f64 = dist[0 * n_cities + route[0]]
+            + dist[route[0] * n_cities + route[1]]
+            + dist[route[1] * n_cities + route[2]]
+            + dist[route[2] * n_cities + 0];
+        if cost < best_cost {
+            best_cost = cost;
+            best_route = vec();
+            push(mut ref best_route, route[0]);
+            push(mut ref best_route, route[1]);
+            push(mut ref best_route, route[2]);
+        }
+        evaluating = disc_next_permutation(mut ref route);
+    }
+
+    print "shortest round trip cost starting and ending at city 0:";
+    print best_cost;
+    print "route:";
+    let i: i64 = 0;
+    while i < (len(ref best_route) as i64) {
+        print best_route[i];
+        i = i + 1;
+    }
+
+    return 0;
+}

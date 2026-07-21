@@ -1,0 +1,579 @@
+// vani-discrete  v0.1.0 — graph algorithms and combinatorics enumeration
+//
+// IMPORTANT — do NOT reimplement vāṇी compiler builtins.
+// Already available as builtins (call directly, never redeclare here):
+//   abs  i64_test_bit  f64_inf()  push pop len set vec
+//
+// No Kosh dependencies -- v0.1.0 is a standalone package.
+//
+// SCOPE DECISION (decided up front, not left implicit): this package
+// fills the "Discrete math" gap-analysis row's G1-G7 items from
+// kosh-index/ROADMAP.md -- graph algorithms the compiler's builtin graph
+// functions (graph_new/add_edge/bfs_reach/dijkstra/mst_kruskal/...) don't
+// cover, plus combinatorics enumeration beyond the builtin counting
+// functions (i64_factorial/i64_binomial/i64_perm/i64_fibonacci).
+//
+// ENCODING — own adjacency-matrix representation, NOT the compiler's
+// builtin Graph type: the builtin Graph is opaque from vāṇी source (no
+// accessor to enumerate a node's neighbors or list all edges), so
+// Floyd-Warshall/SCC/max-flow/bipartite-matching/coloring cannot be built
+// on top of it. This package uses a flat row-major Vec<f64> of size n*n
+// (matching vani-matrix's convention): entry i*n+j is the edge weight from
+// i to j, or f64_inf() if no edge exists. Undirected graphs are directed
+// graphs with both (i,j) and (j,i) set -- add both edges explicitly, no
+// hidden symmetric-fill behavior.
+//
+// ALGORITHM CHOICES (simplest correct algorithm, not the asymptotically
+// optimal one, matching this ecosystem's established precedent -- e.g.
+// vani-geometry's O(n^2) convex hull over a divide-and-conquer algorithm):
+//   - All-pairs shortest path: Floyd-Warshall (O(n^3), not Johnson's).
+//   - Strongly-connected components: Kosaraju's algorithm (two DFS passes
+//     + transpose), not Tarjan's single-pass low-link algorithm -- simpler
+//     to get right, and the extra O(V+E) transpose pass is irrelevant at
+//     this library's "modest size" scope.
+//   - Max-flow: Edmonds-Karp (BFS-based Ford-Fulkerson, O(VE^2)), not
+//     Dinic's -- simpler and more robust, matching the "explicit graph
+//     construction is cheap here" scope.
+//   - Bipartite matching: Kuhn's augmenting-path algorithm (O(VE)), not
+//     Hopcroft-Karp.
+//   - Graph coloring: greedy by node index, NOT an exact/chromatic-number
+//     algorithm (exact graph coloring is NP-hard; greedy gives a valid
+//     coloring, not necessarily the minimum number of colors).
+//   - Combinatorics: enumeration only (next_permutation / next_combination
+//     / subset-from-bitmask), each an O(1)-amortized iterator step the
+//     caller loops themselves -- deliberately NOT materializing all
+//     permutations/combinations into a nested Vec<Vec<i64>>, both because
+//     that would blow up memory for large n and because this ecosystem
+//     avoids nested-Vec encodings throughout (vani-tensor's flat encoding
+//     is the precedent).
+//   - Integer partitions: COUNTING only (`disc_partition_count`, the
+//     literal "partition function" p(n) from number theory), not
+//     enumeration. Partition enumeration's "next partition" algorithms are
+//     genuinely fiddly to get exactly right without a symbolic reference
+//     to check against (the same risk-avoidance judgment call as skipping
+//     a hand-derived Ferrari's-method quartic in vani-algebra) -- counting
+//     via DP is simple, well-defined, and satisfies the ROADMAP gap's
+//     literal wording ("integer partition functions").
+
+// ── Adjacency matrix construction ────────────────────────────────────────────
+
+// Empty n x n adjacency matrix (no edges -- every entry f64_inf()).
+#[bounded_stack(bytes = 112)]
+fn disc_adj_new(n: i64) -> Vec<f64> {
+    let inf: f64 = f64_inf();
+    let out: Vec<f64> = vec();
+    let i: i64 = 0;
+    while i < n * n {
+        push(mut ref out, inf);
+        i = i + 1;
+    }
+    return out;
+}
+
+// Adds a directed edge u->v with the given weight. Returns 0 (unit
+// substitute); adj must be a mut ref parameter, matching vani-matrix's
+// mat_set convention.
+#[bounded_stack(bytes = 80)]
+fn disc_adj_add_edge(adj: mut ref Vec<f64>, n: i64, u: i64, v: i64, weight: f64) -> i64 {
+    set(adj, u * n + v, weight);
+    return 0;
+}
+
+// Adds edges u->v and v->u with the same weight (an undirected edge).
+#[bounded_stack(bytes = 80)]
+fn disc_adj_add_edge_undirected(adj: mut ref Vec<f64>, n: i64, u: i64, v: i64, weight: f64) -> i64 {
+    set(adj, u * n + v, weight);
+    set(adj, v * n + u, weight);
+    return 0;
+}
+
+fn _disc_has_edge(adj: ref Vec<f64>, n: i64, u: i64, v: i64) -> bool {
+    return adj[u * n + v] < f64_inf();
+}
+
+// ── G1: All-pairs shortest path (Floyd-Warshall) ─────────────────────────────
+
+// n x n distance matrix: dist[i*n+j] is the shortest path weight from i to
+// j (f64_inf() if unreachable, 0 on the diagonal regardless of self-loops
+// in adj).
+#[bounded_stack(bytes = 184)]
+fn disc_floyd_warshall(adj: ref Vec<f64>, n: i64) -> Vec<f64> {
+    let dist: Vec<f64> = vec();
+    let i: i64 = 0;
+    while i < n * n {
+        push(mut ref dist, adj[i]);
+        i = i + 1;
+    }
+    i = 0;
+    while i < n {
+        set(mut ref dist, i * n + i, 0.0);
+        i = i + 1;
+    }
+    let k: i64 = 0;
+    while k < n {
+        i = 0;
+        while i < n {
+            let j: i64 = 0;
+            while j < n {
+                let via: f64 = dist[i * n + k] + dist[k * n + j];
+                if via < dist[i * n + j] {
+                    set(mut ref dist, i * n + j, via);
+                }
+                j = j + 1;
+            }
+            i = i + 1;
+        }
+        k = k + 1;
+    }
+    return dist;
+}
+
+// ── G2: Strongly-connected components (Kosaraju) ─────────────────────────────
+
+// Iterative DFS (explicit Vec-based stack, not language recursion) computing
+// a finish-order stack -- last-finished node is at the end of the result.
+#[bounded_stack(bytes = 289)]
+fn _disc_dfs_finish_order(adj: ref Vec<f64>, n: i64) -> Vec<i64> {
+    let visited: Vec<i64> = vec();
+    let i: i64 = 0;
+    while i < n {
+        push(mut ref visited, 0);
+        i = i + 1;
+    }
+    let finish: Vec<i64> = vec();
+    let start: i64 = 0;
+    while start < n {
+        if visited[start] == 0 {
+            let stack_node: Vec<i64> = vec(start);
+            let stack_ci: Vec<i64> = vec(0);
+            set(mut ref visited, start, 1);
+            while (len(ref stack_node) as i64) > 0 {
+                let top: i64 = (len(ref stack_node) as i64) - 1;
+                let node: i64 = stack_node[top];
+                let ci: i64 = stack_ci[top];
+                if ci < n {
+                    set(mut ref stack_ci, top, ci + 1);
+                    if _disc_has_edge(adj, n, node, ci) {
+                        if visited[ci] == 0 {
+                            set(mut ref visited, ci, 1);
+                            push(mut ref stack_node, ci);
+                            push(mut ref stack_ci, 0);
+                        }
+                    }
+                } else {
+                    push(mut ref finish, node);
+                    pop(mut ref stack_node);
+                    pop(mut ref stack_ci);
+                }
+            }
+        }
+        start = start + 1;
+    }
+    return finish;
+}
+
+fn _disc_transpose(adj: ref Vec<f64>, n: i64) -> Vec<f64> {
+    let out: Vec<f64> = disc_adj_new(n);
+    let i: i64 = 0;
+    while i < n {
+        let j: i64 = 0;
+        while j < n {
+            if _disc_has_edge(adj, n, i, j) {
+                set(mut ref out, j * n + i, adj[i * n + j]);
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// Strongly-connected component id per node (length n; ids are arbitrary,
+// only equality/inequality between them is meaningful).
+#[bounded_stack(bytes = 545)]
+fn disc_scc_kosaraju(adj: ref Vec<f64>, n: i64) -> Vec<i64> {
+    let finish: Vec<i64> = _disc_dfs_finish_order(adj, n);
+    let adjT: Vec<f64> = _disc_transpose(adj, n);
+
+    let comp: Vec<i64> = vec();
+    let i: i64 = 0;
+    while i < n {
+        push(mut ref comp, 0 - 1);
+        i = i + 1;
+    }
+
+    let next_id: i64 = 0;
+    let order_idx: i64 = (len(ref finish) as i64) - 1;
+    while order_idx >= 0 {
+        let start: i64 = finish[order_idx];
+        if comp[start] == 0 - 1 {
+            set(mut ref comp, start, next_id);
+            let stack: Vec<i64> = vec(start);
+            while (len(ref stack) as i64) > 0 {
+                let top: i64 = (len(ref stack) as i64) - 1;
+                let node: i64 = stack[top];
+                pop(mut ref stack);
+                let j: i64 = 0;
+                while j < n {
+                    if _disc_has_edge(ref adjT, n, node, j) {
+                        if comp[j] == 0 - 1 {
+                            set(mut ref comp, j, next_id);
+                            push(mut ref stack, j);
+                        }
+                    }
+                    j = j + 1;
+                }
+            }
+            next_id = next_id + 1;
+        }
+        order_idx = order_idx - 1;
+    }
+    return comp;
+}
+
+// ── G3: Max-flow / min-cut (Edmonds-Karp) ────────────────────────────────────
+
+struct MaxFlowResult {
+    flow: f64,
+    residual: Vec<f64>,
+}
+
+// BFS on the residual graph (positive residual capacity = usable edge);
+// returns a parent array (parent[source] = -2, -1 = unreached).
+#[bounded_stack(bytes = 216)]
+fn _disc_bfs_augment(cap: ref Vec<f64>, n: i64, source: i64, sink: i64) -> Vec<i64> {
+    let parent: Vec<i64> = vec();
+    let i: i64 = 0;
+    while i < n {
+        push(mut ref parent, 0 - 1);
+        i = i + 1;
+    }
+    set(mut ref parent, source, 0 - 2);
+    let queue: Vec<i64> = vec(source);
+    let qi: i64 = 0;
+    while qi < (len(ref queue) as i64) {
+        let u: i64 = queue[qi];
+        qi = qi + 1;
+        if u == sink {
+            return parent;
+        }
+        let v: i64 = 0;
+        while v < n {
+            if cap[u * n + v] > 0.0 {
+                if parent[v] == 0 - 1 {
+                    set(mut ref parent, v, u);
+                    push(mut ref queue, v);
+                }
+            }
+            v = v + 1;
+        }
+    }
+    return parent;
+}
+
+// Max flow from source to sink, via repeated BFS shortest-augmenting-path
+// (Edmonds-Karp). capacity entries of f64_inf() are treated as "no edge"
+// (0 residual capacity), not literal infinite capacity. Returns both the
+// flow value and the final residual-capacity matrix (feed the latter to
+// disc_min_cut_nodes for the corresponding min cut).
+#[bounded_stack(bytes = 465)]
+fn disc_max_flow(capacity: ref Vec<f64>, n: i64, source: i64, sink: i64) -> MaxFlowResult {
+    let residual: Vec<f64> = vec();
+    let i: i64 = 0;
+    while i < n * n {
+        let c: f64 = capacity[i];
+        if c >= f64_inf() {
+            push(mut ref residual, 0.0);
+        } else {
+            push(mut ref residual, c);
+        }
+        i = i + 1;
+    }
+
+    let total_flow: f64 = 0.0;
+    let keep_going: bool = true;
+    while keep_going {
+        let parent: Vec<i64> = _disc_bfs_augment(ref residual, n, source, sink);
+        if parent[sink] == 0 - 1 {
+            keep_going = false;
+        } else {
+            let bottleneck: f64 = f64_inf();
+            let v: i64 = sink;
+            while v != source {
+                let u: i64 = parent[v];
+                if residual[u * n + v] < bottleneck {
+                    bottleneck = residual[u * n + v];
+                }
+                v = u;
+            }
+            v = sink;
+            while v != source {
+                let u: i64 = parent[v];
+                set(mut ref residual, u * n + v, residual[u * n + v] - bottleneck);
+                set(mut ref residual, v * n + u, residual[v * n + u] + bottleneck);
+                v = u;
+            }
+            total_flow = total_flow + bottleneck;
+        }
+    }
+    return MaxFlowResult { flow: total_flow, residual: residual };
+}
+
+// Min-cut source-side membership (length n; 1 = reachable from source in
+// the residual graph = source side of the min cut, 0 = sink side). Pass
+// the residual field from a disc_max_flow result computed with the same
+// source.
+#[bounded_stack(bytes = 184)]
+fn disc_min_cut_nodes(residual: ref Vec<f64>, n: i64, source: i64) -> Vec<i64> {
+    let side: Vec<i64> = vec();
+    let i: i64 = 0;
+    while i < n {
+        push(mut ref side, 0);
+        i = i + 1;
+    }
+    set(mut ref side, source, 1);
+    let queue: Vec<i64> = vec(source);
+    let qi: i64 = 0;
+    while qi < (len(ref queue) as i64) {
+        let u: i64 = queue[qi];
+        qi = qi + 1;
+        let v: i64 = 0;
+        while v < n {
+            if residual[u * n + v] > 0.0 {
+                if side[v] == 0 {
+                    set(mut ref side, v, 1);
+                    push(mut ref queue, v);
+                }
+            }
+            v = v + 1;
+        }
+    }
+    return side;
+}
+
+// ── G4: Bipartite matching (Kuhn's augmenting-path algorithm) ────────────────
+
+// Recursion depth is bounded by n_right (each recursive call marks a new
+// right-node visited, so no node is revisited within one augmenting-path
+// search); capped at 256 to match this library's "modest size" scope
+// (native stack cost scales linearly with this cap).
+#[bounded(256)]
+#[bounded_stack(bytes = 25700)]
+fn _disc_bip_try_augment(adj: ref Vec<f64>, n_left: i64, n_right: i64, u: i64, visited: mut ref Vec<i64>, match_right: mut ref Vec<i64>) -> bool {
+    let v: i64 = 0;
+    while v < n_right {
+        if adj[u * n_right + v] < f64_inf() {
+            if visited[v] == 0 {
+                set(visited, v, 1);
+                let ok: bool = false;
+                if match_right[v] == 0 - 1 {
+                    ok = true;
+                } else {
+                    ok = _disc_bip_try_augment(adj, n_left, n_right, match_right[v], visited, match_right);
+                }
+                if ok {
+                    set(match_right, v, u);
+                    return true;
+                }
+            }
+        }
+        v = v + 1;
+    }
+    return false;
+}
+
+// Maximum bipartite matching between n_left left-nodes and n_right
+// right-nodes (adj is n_left x n_right, adj[i*n_right+j] < f64_inf() means
+// an edge exists). Returns match_right (length n_right): match_right[j] is
+// the matched left-node index, or -1 if right-node j is unmatched.
+#[bounded_stack(bytes = 25876)]
+fn disc_bipartite_matching(adj: ref Vec<f64>, n_left: i64, n_right: i64) -> Vec<i64> {
+    let match_right: Vec<i64> = vec();
+    let i: i64 = 0;
+    while i < n_right {
+        push(mut ref match_right, 0 - 1);
+        i = i + 1;
+    }
+    let u: i64 = 0;
+    while u < n_left {
+        let visited: Vec<i64> = vec();
+        let k: i64 = 0;
+        while k < n_right {
+            push(mut ref visited, 0);
+            k = k + 1;
+        }
+        _disc_bip_try_augment(adj, n_left, n_right, u, mut ref visited, mut ref match_right);
+        u = u + 1;
+    }
+    return match_right;
+}
+
+// ── G5: Graph coloring (greedy) ───────────────────────────────────────────────
+
+// Greedy coloring in node-index order: each node gets the smallest color
+// (0-indexed) not already used by an already-colored neighbor. A valid
+// coloring, NOT a minimum-color (chromatic-number) one -- exact graph
+// coloring is NP-hard and out of scope.
+#[bounded_stack(bytes = 265)]
+fn disc_greedy_coloring(adj: ref Vec<f64>, n: i64) -> Vec<i64> {
+    let color: Vec<i64> = vec();
+    let i: i64 = 0;
+    while i < n {
+        push(mut ref color, 0 - 1);
+        i = i + 1;
+    }
+    i = 0;
+    while i < n {
+        let used: Vec<i64> = vec();
+        let k: i64 = 0;
+        while k < n {
+            push(mut ref used, 0);
+            k = k + 1;
+        }
+        let j: i64 = 0;
+        while j < n {
+            if _disc_has_edge(adj, n, i, j) {
+                if color[j] != 0 - 1 {
+                    set(mut ref used, color[j], 1);
+                }
+            }
+            j = j + 1;
+        }
+        let c: i64 = 0;
+        while used[c] == 1 {
+            c = c + 1;
+        }
+        set(mut ref color, i, c);
+        i = i + 1;
+    }
+    return color;
+}
+
+// ── G6: Combinatorics enumeration ────────────────────────────────────────────
+
+// Advances perm in place to the next permutation in lexicographic order
+// (Narayana's algorithm, the same one C++'s std::next_permutation uses).
+// Returns false (and leaves perm unchanged) once the last permutation
+// (fully descending order) has been reached -- caller loops on the return
+// value, matching the STL iterator-style convention rather than
+// materializing every permutation into a nested Vec<Vec<i64>>.
+#[bounded_stack(bytes = 147)]
+fn disc_next_permutation(perm: mut ref Vec<i64>) -> bool {
+    let n: i64 = len(perm) as i64;
+    if n < 2 {
+        return false;
+    }
+    let i: i64 = n - 2;
+    let found_i: i64 = 0 - 1;
+    while i >= 0 {
+        if perm[i] < perm[i + 1] {
+            found_i = i;
+            i = 0 - 1;
+        } else {
+            i = i - 1;
+        }
+    }
+    if found_i == 0 - 1 {
+        return false;
+    }
+    let j: i64 = n - 1;
+    while perm[j] <= perm[found_i] {
+        j = j - 1;
+    }
+    let tmp: i64 = perm[found_i];
+    set(perm, found_i, perm[j]);
+    set(perm, j, tmp);
+
+    let lo: i64 = found_i + 1;
+    let hi: i64 = n - 1;
+    while lo < hi {
+        let t: i64 = perm[lo];
+        set(perm, lo, perm[hi]);
+        set(perm, hi, t);
+        lo = lo + 1;
+        hi = hi - 1;
+    }
+    return true;
+}
+
+// Advances combo (a strictly increasing k-length sequence of indices in
+// [0,n)) in place to the next k-combination in lexicographic order.
+// Returns false once the last combination has been reached, same
+// iterator-style convention as disc_next_permutation.
+#[bounded_stack(bytes = 107)]
+fn disc_next_combination(combo: mut ref Vec<i64>, n: i64) -> bool {
+    let k: i64 = len(combo) as i64;
+    if k == 0 {
+        return false;
+    }
+    let i: i64 = k - 1;
+    let found_i: i64 = 0 - 1;
+    while i >= 0 {
+        if combo[i] < n - k + i {
+            found_i = i;
+            i = 0 - 1;
+        } else {
+            i = i - 1;
+        }
+    }
+    if found_i == 0 - 1 {
+        return false;
+    }
+    set(combo, found_i, combo[found_i] + 1);
+    let j: i64 = found_i + 1;
+    while j < k {
+        set(combo, j, combo[found_i] + (j - found_i));
+        j = j + 1;
+    }
+    return true;
+}
+
+// Decodes a bitmask into the subset of {0,...,n-1} it represents (bit i
+// set means index i is included), via the i64_test_bit builtin. Loop mask
+// from 0 to 2^n - 1 yourself to enumerate every subset.
+#[bounded_stack(bytes = 112)]
+fn disc_subset_from_bitmask(mask: i64, n: i64) -> Vec<i64> {
+    let out: Vec<i64> = vec();
+    let i: i64 = 0;
+    while i < n {
+        if i64_test_bit(mask, i) {
+            push(mut ref out, i);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// ── G7: Integer partitions (counting) ────────────────────────────────────────
+
+// p(n), the number of ways to write n as a sum of positive integers
+// (order doesn't matter) -- the literal "partition function" from number
+// theory. O(n^2) DP (coin-change-style: dp[i] accumulates ways to build i
+// using parts up to the current k). Counting only, not enumeration -- see
+// file header for why.
+#[bounded_stack(bytes = 128)]
+fn disc_partition_count(n: i64) -> i64 {
+    if n < 0 {
+        return 0;
+    }
+    let dp: Vec<i64> = vec();
+    let i: i64 = 0;
+    while i <= n {
+        if i == 0 {
+            push(mut ref dp, 1);
+        } else {
+            push(mut ref dp, 0);
+        }
+        i = i + 1;
+    }
+    let k: i64 = 1;
+    while k <= n {
+        i = k;
+        while i <= n {
+            set(mut ref dp, i, dp[i] + dp[i - k]);
+            i = i + 1;
+        }
+        k = k + 1;
+    }
+    return dp[n];
+}
