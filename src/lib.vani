@@ -104,6 +104,7 @@ fn disc_adj_add_edge_undirected(adj: mut ref Vec<f64>, n: i64, u: i64, v: i64, w
 }
 
 #[wcet(cycles = 27)]
+#[bounded_stack(bytes = 65)]
 fn _disc_has_edge(adj: ref Vec<f64>, n: i64, u: i64, v: i64) -> bool {
     return adj[u * n + v] < f64_inf();
 }
@@ -193,6 +194,7 @@ fn _disc_dfs_finish_order(adj: ref Vec<f64>, n: i64) -> Vec<i64> {
 
 // WCET: call disc_adj_new (O(n^2)) + a nested i/j loop over the n x n
 // matrix -- O(n^2) overall.
+#[bounded_stack(bytes = 240)]
 fn _disc_transpose(adj: ref Vec<f64>, n: i64) -> Vec<f64> {
     let out: Vec<f64> = disc_adj_new(n);
     let i: i64 = 0;
