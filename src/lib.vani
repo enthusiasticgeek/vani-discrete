@@ -54,10 +54,24 @@
 //     a hand-derived Ferrari's-method quartic in vani-algebra) -- counting
 //     via DP is simple, well-defined, and satisfies the ROADMAP gap's
 //     literal wording ("integer partition functions").
+//
+// WCET (MAINT-1, added 2026-07-21 -- see kosh-index/ROADMAP.md):
+// disc_adj_add_edge/disc_adj_add_edge_undirected/_disc_has_edge are the
+// only genuinely O(1) functions here (confirmed both by `vanic check
+// --big-o` and by giving them a real #[wcet(cycles=N)] -- vanic check's
+// exact reported worst-case, same discipline as #[bounded_stack]). Every
+// other function loops over the graph size n (or, for the combinatorics
+// fns, an array/bitmask of size n) -- unbounded under the checker's WCET
+// model. Rather than hand-deriving each one from scratch, the Big-O class
+// noted on each (also independently confirmed via `vanic check --big-o=force`)
+// is the actual dominant term in its WCET formula.
 
 // ── Adjacency matrix construction ────────────────────────────────────────────
 
 // Empty n x n adjacency matrix (no edges -- every entry f64_inf()).
+// WCET = 20 + n^2 * ~8 cycles (one flat loop, but bounded by n*n, not n --
+// `vanic check --big-o` reports this fn as O(n) since its model counts
+// loop nesting depth, not the bound expression's own value).
 #[bounded_stack(bytes = 112)]
 fn disc_adj_new(n: i64) -> Vec<f64> {
     let inf: f64 = f64_inf();
@@ -74,6 +88,7 @@ fn disc_adj_new(n: i64) -> Vec<f64> {
 // substitute); adj must be a mut ref parameter, matching vani-matrix's
 // mat_set convention.
 #[bounded_stack(bytes = 80)]
+#[wcet(cycles = 27)]
 fn disc_adj_add_edge(adj: mut ref Vec<f64>, n: i64, u: i64, v: i64, weight: f64) -> i64 {
     set(adj, u * n + v, weight);
     return 0;
@@ -81,12 +96,14 @@ fn disc_adj_add_edge(adj: mut ref Vec<f64>, n: i64, u: i64, v: i64, weight: f64)
 
 // Adds edges u->v and v->u with the same weight (an undirected edge).
 #[bounded_stack(bytes = 80)]
+#[wcet(cycles = 48)]
 fn disc_adj_add_edge_undirected(adj: mut ref Vec<f64>, n: i64, u: i64, v: i64, weight: f64) -> i64 {
     set(adj, u * n + v, weight);
     set(adj, v * n + u, weight);
     return 0;
 }
 
+#[wcet(cycles = 27)]
 fn _disc_has_edge(adj: ref Vec<f64>, n: i64, u: i64, v: i64) -> bool {
     return adj[u * n + v] < f64_inf();
 }
@@ -95,7 +112,7 @@ fn _disc_has_edge(adj: ref Vec<f64>, n: i64, u: i64, v: i64) -> bool {
 
 // n x n distance matrix: dist[i*n+j] is the shortest path weight from i to
 // j (f64_inf() if unreachable, 0 on the diagonal regardless of self-loops
-// in adj).
+// in adj). WCET: classic triply-nested k/i/j loop -- O(n^3).
 #[bounded_stack(bytes = 184)]
 fn disc_floyd_warshall(adj: ref Vec<f64>, n: i64) -> Vec<f64> {
     let dist: Vec<f64> = vec();
@@ -132,6 +149,8 @@ fn disc_floyd_warshall(adj: ref Vec<f64>, n: i64) -> Vec<f64> {
 
 // Iterative DFS (explicit Vec-based stack, not language recursion) computing
 // a finish-order stack -- last-finished node is at the end of the result.
+// WCET: outer loop O(n) start nodes, inner stack-walk visits each node once
+// and scans up to n neighbor candidates per visit -- O(n^2) overall.
 #[bounded_stack(bytes = 289)]
 fn _disc_dfs_finish_order(adj: ref Vec<f64>, n: i64) -> Vec<i64> {
     let visited: Vec<i64> = vec();
@@ -172,6 +191,8 @@ fn _disc_dfs_finish_order(adj: ref Vec<f64>, n: i64) -> Vec<i64> {
     return finish;
 }
 
+// WCET: call disc_adj_new (O(n^2)) + a nested i/j loop over the n x n
+// matrix -- O(n^2) overall.
 fn _disc_transpose(adj: ref Vec<f64>, n: i64) -> Vec<f64> {
     let out: Vec<f64> = disc_adj_new(n);
     let i: i64 = 0;
@@ -189,7 +210,11 @@ fn _disc_transpose(adj: ref Vec<f64>, n: i64) -> Vec<f64> {
 }
 
 // Strongly-connected component id per node (length n; ids are arbitrary,
-// only equality/inequality between them is meaningful).
+// only equality/inequality between them is meaningful). WCET: call
+// _disc_dfs_finish_order (O(n^2)) + call _disc_transpose (O(n^2)) + a
+// second stack-walk over the transpose, same O(n^2) shape as the first --
+// O(n^2) overall, not O(n^3): the two DFS passes are sequential, not
+// nested inside each other.
 #[bounded_stack(bytes = 545)]
 fn disc_scc_kosaraju(adj: ref Vec<f64>, n: i64) -> Vec<i64> {
     let finish: Vec<i64> = _disc_dfs_finish_order(adj, n);
@@ -239,7 +264,8 @@ struct MaxFlowResult {
 }
 
 // BFS on the residual graph (positive residual capacity = usable edge);
-// returns a parent array (parent[source] = -2, -1 = unreached).
+// returns a parent array (parent[source] = -2, -1 = unreached). WCET: BFS
+// over an n x n dense adjacency -- O(n^2).
 #[bounded_stack(bytes = 216)]
 fn _disc_bfs_augment(cap: ref Vec<f64>, n: i64, source: i64, sink: i64) -> Vec<i64> {
     let parent: Vec<i64> = vec();
@@ -275,7 +301,12 @@ fn _disc_bfs_augment(cap: ref Vec<f64>, n: i64, source: i64, sink: i64) -> Vec<i
 // (Edmonds-Karp). capacity entries of f64_inf() are treated as "no edge"
 // (0 residual capacity), not literal infinite capacity. Returns both the
 // flow value and the final residual-capacity matrix (feed the latter to
-// disc_min_cut_nodes for the corresponding min cut).
+// disc_min_cut_nodes for the corresponding min cut). WCET: Edmonds-Karp is
+// O(VE^2), i.e. O(n^5) in the dense n x n representation's worst case
+// (E=O(n^2)) -- no fixed iteration cap here (the augmenting-path loop
+// runs until no path remains, standard for this algorithm), so this is
+// the one function in the package whose own WCET genuinely depends on the
+// flow value/graph structure, not just n.
 #[bounded_stack(bytes = 465)]
 fn disc_max_flow(capacity: ref Vec<f64>, n: i64, source: i64, sink: i64) -> MaxFlowResult {
     let residual: Vec<f64> = vec();
@@ -322,7 +353,7 @@ fn disc_max_flow(capacity: ref Vec<f64>, n: i64, source: i64, sink: i64) -> MaxF
 // Min-cut source-side membership (length n; 1 = reachable from source in
 // the residual graph = source side of the min cut, 0 = sink side). Pass
 // the residual field from a disc_max_flow result computed with the same
-// source.
+// source. WCET: BFS over an n x n dense adjacency -- O(n^2).
 #[bounded_stack(bytes = 184)]
 fn disc_min_cut_nodes(residual: ref Vec<f64>, n: i64, source: i64) -> Vec<i64> {
     let side: Vec<i64> = vec();
@@ -356,7 +387,12 @@ fn disc_min_cut_nodes(residual: ref Vec<f64>, n: i64, source: i64) -> Vec<i64> {
 // Recursion depth is bounded by n_right (each recursive call marks a new
 // right-node visited, so no node is revisited within one augmenting-path
 // search); capped at 256 to match this library's "modest size" scope
-// (native stack cost scales linearly with this cap).
+// (native stack cost scales linearly with this cap). WCET: NOT computable
+// even with #[bounded(256)] capping the recursion depth -- the per-call
+// `while v < n_right` loop is itself unbounded to the checker (n_right is
+// a runtime parameter), so recursion_bound x body doesn't resolve to a
+// number. O(n_right) per call, O(n_right) recursion depth -> O(n_right^2)
+// per top-level call from disc_bipartite_matching.
 #[bounded(256)]
 #[bounded_stack(bytes = 25700)]
 fn _disc_bip_try_augment(adj: ref Vec<f64>, n_left: i64, n_right: i64, u: i64, visited: mut ref Vec<i64>, match_right: mut ref Vec<i64>) -> bool {
@@ -385,7 +421,10 @@ fn _disc_bip_try_augment(adj: ref Vec<f64>, n_left: i64, n_right: i64, u: i64, v
 // Maximum bipartite matching between n_left left-nodes and n_right
 // right-nodes (adj is n_left x n_right, adj[i*n_right+j] < f64_inf() means
 // an edge exists). Returns match_right (length n_right): match_right[j] is
-// the matched left-node index, or -1 if right-node j is unmatched.
+// the matched left-node index, or -1 if right-node j is unmatched. WCET:
+// O(n_left) top-level calls into _disc_bip_try_augment (O(n_right^2)
+// each) -- O(n_left * n_right^2), the standard O(VE) bound for Kuhn's
+// algorithm on a dense bipartite graph.
 #[bounded_stack(bytes = 25876)]
 fn disc_bipartite_matching(adj: ref Vec<f64>, n_left: i64, n_right: i64) -> Vec<i64> {
     let match_right: Vec<i64> = vec();
@@ -413,7 +452,8 @@ fn disc_bipartite_matching(adj: ref Vec<f64>, n_left: i64, n_right: i64) -> Vec<
 // Greedy coloring in node-index order: each node gets the smallest color
 // (0-indexed) not already used by an already-colored neighbor. A valid
 // coloring, NOT a minimum-color (chromatic-number) one -- exact graph
-// coloring is NP-hard and out of scope.
+// coloring is NP-hard and out of scope. WCET: O(n) nodes, each scanning
+// O(n) neighbors to build its "used colors" set -- O(n^2).
 #[bounded_stack(bytes = 265)]
 fn disc_greedy_coloring(adj: ref Vec<f64>, n: i64) -> Vec<i64> {
     let color: Vec<i64> = vec();
@@ -456,7 +496,9 @@ fn disc_greedy_coloring(adj: ref Vec<f64>, n: i64) -> Vec<i64> {
 // Returns false (and leaves perm unchanged) once the last permutation
 // (fully descending order) has been reached -- caller loops on the return
 // value, matching the STL iterator-style convention rather than
-// materializing every permutation into a nested Vec<Vec<i64>>.
+// materializing every permutation into a nested Vec<Vec<i64>>. WCET =
+// 20 + len(perm) * ~8 cycles (amortized O(1) in practice across a full
+// enumeration, but O(n) worst-case for any single call).
 #[bounded_stack(bytes = 147)]
 fn disc_next_permutation(perm: mut ref Vec<i64>) -> bool {
     let n: i64 = len(perm) as i64;
@@ -499,7 +541,8 @@ fn disc_next_permutation(perm: mut ref Vec<i64>) -> bool {
 // Advances combo (a strictly increasing k-length sequence of indices in
 // [0,n)) in place to the next k-combination in lexicographic order.
 // Returns false once the last combination has been reached, same
-// iterator-style convention as disc_next_permutation.
+// iterator-style convention as disc_next_permutation. WCET = 20 + k *
+// ~8 cycles (k = len(combo)), same amortized-O(1)-per-step reasoning.
 #[bounded_stack(bytes = 107)]
 fn disc_next_combination(combo: mut ref Vec<i64>, n: i64) -> bool {
     let k: i64 = len(combo) as i64;
@@ -530,7 +573,8 @@ fn disc_next_combination(combo: mut ref Vec<i64>, n: i64) -> bool {
 
 // Decodes a bitmask into the subset of {0,...,n-1} it represents (bit i
 // set means index i is included), via the i64_test_bit builtin. Loop mask
-// from 0 to 2^n - 1 yourself to enumerate every subset.
+// from 0 to 2^n - 1 yourself to enumerate every subset. WCET = 20 + n *
+// ~10 cycles.
 #[bounded_stack(bytes = 112)]
 fn disc_subset_from_bitmask(mask: i64, n: i64) -> Vec<i64> {
     let out: Vec<i64> = vec();
