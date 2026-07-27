@@ -69,5 +69,51 @@ fn main() -> i64 {
     }
     assert matched == 2;
 
+    // disc_bipartite_matching_hk (Hopcroft-Karp) must find the same
+    // maximum on the same graph (not necessarily the identical
+    // assignment, since more than one maximum matching can exist here).
+    let match_right_hk: Vec<i64> = disc_bipartite_matching_hk(ref bip, n_left, n_right);
+    let matched_hk: i64 = 0;
+    i = 0;
+    while i < n_right {
+        if match_right_hk[i] != 0 - 1 {
+            matched_hk = matched_hk + 1;
+        }
+        i = i + 1;
+    }
+    assert matched_hk == 2;
+
+    // A 3x3 "path" bipartite graph (0-0, 1-{0,1}, 2-{1,2}) that admits a
+    // perfect matching (size 3) only via chained augmentation -- exercises
+    // Hopcroft-Karp's multi-path-per-phase augmentation more than the 2x2
+    // example above. Both algorithms must agree on the maximum size, and
+    // every matched pair must be a real edge (not just a count that
+    // happens to add up).
+    let n_left2: i64 = 3;
+    let n_right2: i64 = 3;
+    let bip2: Vec<f64> = vec();
+    push(mut ref bip2, 1.0); push(mut ref bip2, inf); push(mut ref bip2, inf);
+    push(mut ref bip2, 1.0); push(mut ref bip2, 1.0); push(mut ref bip2, inf);
+    push(mut ref bip2, inf); push(mut ref bip2, 1.0); push(mut ref bip2, 1.0);
+
+    let mr_kuhn: Vec<i64> = disc_bipartite_matching(ref bip2, n_left2, n_right2);
+    let mr_hk: Vec<i64> = disc_bipartite_matching_hk(ref bip2, n_left2, n_right2);
+    let matched_kuhn: i64 = 0;
+    let matched_hk2: i64 = 0;
+    i = 0;
+    while i < n_right2 {
+        if mr_kuhn[i] != 0 - 1 {
+            matched_kuhn = matched_kuhn + 1;
+            assert bip2[mr_kuhn[i] * n_right2 + i] < inf;
+        }
+        if mr_hk[i] != 0 - 1 {
+            matched_hk2 = matched_hk2 + 1;
+            assert bip2[mr_hk[i] * n_right2 + i] < inf;
+        }
+        i = i + 1;
+    }
+    assert matched_kuhn == 3;
+    assert matched_hk2 == 3;
+
     return 0;
 }

@@ -34,11 +34,14 @@
 //   - Max-flow: Edmonds-Karp (BFS-based Ford-Fulkerson, O(VE^2)), not
 //     Dinic's -- simpler and more robust, matching the "explicit graph
 //     construction is cheap here" scope.
-//   - Bipartite matching: Kuhn's augmenting-path algorithm (O(VE)), not
-//     Hopcroft-Karp.
-//   - Graph coloring: greedy by node index, NOT an exact/chromatic-number
-//     algorithm (exact graph coloring is NP-hard; greedy gives a valid
-//     coloring, not necessarily the minimum number of colors).
+//   - Bipartite matching: Kuhn's augmenting-path algorithm (O(VE)) is the
+//     v0.1.0 default; disc_bipartite_matching_hk (Hopcroft-Karp,
+//     O(sqrt(V)*E)) is also available for larger graphs where the extra
+//     BFS-layering complexity pays off (2026-07-27).
+//   - Graph coloring: greedy by node index (disc_greedy_coloring) is the
+//     always-fast default; disc_exact_coloring (backtracking search for
+//     the true chromatic number, 2026-07-27) is also available, but only
+//     practical for small n -- exact graph coloring is NP-hard.
 //   - Combinatorics: enumeration only (next_permutation / next_combination
 //     / subset-from-bitmask), each an O(1)-amortized iterator step the
 //     caller loops themselves -- deliberately NOT materializing all
@@ -447,6 +450,226 @@ fn disc_bipartite_matching(adj: ref Vec<f64>, n_left: i64, n_right: i64) -> Vec<
         u = u + 1;
     }
     return match_right;
+}
+
+// ── Hopcroft-Karp bipartite matching ────────────────────────────────────────
+
+// BFS layering phase: labels every left-node reachable (via alternating
+// paths from an unmatched left-node) with its distance, stopping once an
+// unmatched right-node is found at some distance dist_nil (the shortest
+// augmenting-path length this phase). Returns true iff at least one
+// augmenting path exists. `n_left + 1` serves as "unreached"/"infinity"
+// (dist values are always < n_left, so this is a safe sentinel with no
+// overflow risk in the dist[uu]+1 arithmetic below). WCET: BFS over an
+// n_left x n_right dense adjacency -- O(n_left * n_right).
+#[bounded_stack(bytes = 232)]
+fn _disc_hk_bfs(adj: ref Vec<f64>, n_left: i64, n_right: i64, match_left: ref Vec<i64>, match_right: ref Vec<i64>, dist: mut ref Vec<i64>) -> bool {
+    let inf: i64 = n_left + 1;
+    let queue: Vec<i64> = vec();
+    let u: i64 = 0;
+    while u < n_left {
+        if match_left[u] == 0 - 1 {
+            set(dist, u, 0);
+            push(mut ref queue, u);
+        } else {
+            set(dist, u, inf);
+        }
+        u = u + 1;
+    }
+    let dist_nil: i64 = inf;
+    let qi: i64 = 0;
+    while qi < (len(ref queue) as i64) {
+        let uu: i64 = queue[qi];
+        qi = qi + 1;
+        if dist[uu] < dist_nil {
+            let v: i64 = 0;
+            while v < n_right {
+                if adj[uu * n_right + v] < f64_inf() {
+                    let w: i64 = match_right[v];
+                    if w == 0 - 1 {
+                        if dist_nil == inf {
+                            dist_nil = dist[uu] + 1;
+                        }
+                    } else {
+                        if dist[w] == inf {
+                            set(dist, w, dist[uu] + 1);
+                            push(mut ref queue, w);
+                        }
+                    }
+                }
+                v = v + 1;
+            }
+        }
+    }
+    return dist_nil != inf;
+}
+
+// DFS phase: finds a shortest augmenting path from u, only following
+// edges to right-nodes whose current match sits exactly one BFS layer
+// further out (dist[w] == dist[u]+1) -- this layering restriction is
+// what lets one BFS+DFS phase augment along MULTIPLE vertex-disjoint
+// shortest paths at once, the source of Hopcroft-Karp's speedup over
+// plain Kuhn's algorithm (disc_bipartite_matching above), which
+// re-searches from scratch per left-node. On success, updates both
+// match_left and match_right along the whole path as the recursion
+// unwinds. On failure, marks dist[u] as exhausted (the standard
+// optimization that keeps a single phase from re-exploring the same
+// dead end) so this phase's later DFS calls skip it immediately.
+// #[bounded(256)]: recursion depth is bounded by n_left (dist strictly
+// increases each call, capped below n_left) -- same practical ceiling
+// as _disc_bip_try_augment's own recursion bound.
+#[bounded(256)]
+#[bounded_stack(bytes = 29812)]
+fn _disc_hk_dfs(adj: ref Vec<f64>, n_left: i64, n_right: i64, u: i64, dist: mut ref Vec<i64>, match_left: mut ref Vec<i64>, match_right: mut ref Vec<i64>) -> bool {
+    let v: i64 = 0;
+    while v < n_right {
+        if adj[u * n_right + v] < f64_inf() {
+            let w: i64 = match_right[v];
+            let take: bool = false;
+            if w == 0 - 1 {
+                take = true;
+            } else {
+                if dist[w] == dist[u] + 1 {
+                    if _disc_hk_dfs(adj, n_left, n_right, w, dist, match_left, match_right) {
+                        take = true;
+                    }
+                }
+            }
+            if take {
+                set(match_right, v, u);
+                set(match_left, u, v);
+                return true;
+            }
+        }
+        v = v + 1;
+    }
+    set(dist, u, n_left + 1);
+    return false;
+}
+
+// Maximum bipartite matching via Hopcroft-Karp: repeated BFS+DFS phases,
+// each augmenting along every vertex-disjoint shortest augmenting path at
+// once, rather than one path per phase (Kuhn's algorithm, above). Same
+// adjacency encoding and return convention as disc_bipartite_matching
+// (match_right[j] = matched left-node, or -1). WCET: O(sqrt(n_left))
+// phases, each O(n_left * n_right) for BFS plus O(n_left * n_right) total
+// DFS work -- O(sqrt(n_left) * n_left * n_right), the standard bound for
+// Hopcroft-Karp on a dense bipartite graph (better than
+// disc_bipartite_matching's O(n_left * n_right^2) for large, sparse-ish
+// graphs; validated to agree with it on the same inputs in tests/).
+#[bounded_stack(bytes = 30031)]
+fn disc_bipartite_matching_hk(adj: ref Vec<f64>, n_left: i64, n_right: i64) -> Vec<i64> {
+    let match_left: Vec<i64> = vec();
+    let i: i64 = 0;
+    while i < n_left {
+        push(mut ref match_left, 0 - 1);
+        i = i + 1;
+    }
+    let match_right: Vec<i64> = vec();
+    let j: i64 = 0;
+    while j < n_right {
+        push(mut ref match_right, 0 - 1);
+        j = j + 1;
+    }
+    let dist: Vec<i64> = vec();
+    let k: i64 = 0;
+    while k < n_left {
+        push(mut ref dist, 0);
+        k = k + 1;
+    }
+
+    let has_aug: bool = _disc_hk_bfs(adj, n_left, n_right, ref match_left, ref match_right, mut ref dist);
+    while has_aug {
+        let u: i64 = 0;
+        while u < n_left {
+            if match_left[u] == 0 - 1 {
+                let _ok: bool = _disc_hk_dfs(adj, n_left, n_right, u, mut ref dist, mut ref match_left, mut ref match_right);
+            }
+            u = u + 1;
+        }
+        has_aug = _disc_hk_bfs(adj, n_left, n_right, ref match_left, ref match_right, mut ref dist);
+    }
+    return match_right;
+}
+
+// ── Exact (minimum-color) graph coloring, small graphs only ────────────────
+
+// Backtracking search: can nodes [node, n) be colored with colors
+// [0, k) given [0, node) are already colored, without any edge having
+// matching endpoint colors? Checks against every earlier-index neighbor
+// only (later nodes aren't colored yet) -- standard forward-checking
+// pruning. #[bounded(256)]: recursion depth is exactly n (one level per
+// node), same practical ceiling as the bipartite-matching recursions in
+// this file -- see disc_exact_coloring's own comment on why this is only
+// practical for small n.
+#[bounded(256)]
+#[bounded_stack(bytes = 28013)]
+fn _disc_color_try(adj: ref Vec<f64>, n: i64, k: i64, node: i64, color: mut ref Vec<i64>) -> bool {
+    if node == n {
+        return true;
+    }
+    let c: i64 = 0;
+    while c < k {
+        let ok: bool = true;
+        let j: i64 = 0;
+        while j < node {
+            if _disc_has_edge(adj, n, node, j) {
+                if color[j] == c {
+                    ok = false;
+                }
+            }
+            j = j + 1;
+        }
+        if ok {
+            set(color, node, c);
+            if _disc_color_try(adj, n, k, node + 1, color) {
+                return true;
+            }
+            set(color, node, 0 - 1);
+        }
+        c = c + 1;
+    }
+    return false;
+}
+
+// Exact (chromatic-number-optimal) graph coloring: tries k = 1, 2, ...
+// until a valid k-coloring exists, unlike disc_greedy_coloring (always
+// fast, but not necessarily minimum). Exact coloring is NP-hard --
+// exponential worst case in the backtracking search -- so this is only
+// practical for small n; caller-trust that n is small enough to
+// terminate in reasonable time (not checked at runtime, same convention
+// as every other caller-trust limit in this ecosystem). Falls back to
+// one color per node (k=n, always valid) if no smaller k succeeds --
+// reachable in principle, though a smaller k always exists for any graph
+// with at least one non-edge.
+// NO #[wcet]: the k-search loop runs a runtime-dependent number of times
+// (up to n), each iteration itself calling the backtracking search --
+// unbounded to the checker, same situation as the NP-hard/exponential
+// functions elsewhere in this ecosystem (e.g. vani-algebra's
+// algebra_cubic_roots_real).
+#[bounded_stack(bytes = 28206)]
+fn disc_exact_coloring(adj: ref Vec<f64>, n: i64) -> Vec<i64> {
+    let k: i64 = 1;
+    while k <= n {
+        let color: Vec<i64> = vec();
+        let i: i64 = 0;
+        while i < n {
+            push(mut ref color, 0 - 1);
+            i = i + 1;
+        }
+        let ok: bool = _disc_color_try(adj, n, k, 0, mut ref color);
+        if ok {
+            return color;
+        }
+        k = k + 1;
+    }
+    let color_n: Vec<i64> = vec();
+    let ii: i64 = 0;
+    while ii < n {
+        push(mut ref color_n, ii);
+        ii = ii + 1;
+    }
+    return color_n;
 }
 
 // ── G5: Graph coloring (greedy) ───────────────────────────────────────────────

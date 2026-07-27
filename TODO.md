@@ -90,13 +90,39 @@ Fills the G1-G7 items from kosh-index/ROADMAP.md's "Known gaps within
 
 ---
 
+## v0.1.3 (2026-07-27)
+
+- [x] `disc_bipartite_matching_hk` -- Hopcroft-Karp bipartite matching
+      (repeated BFS-layering + layer-respecting DFS phases, augmenting
+      along every vertex-disjoint shortest path per phase, rather than
+      one path per phase like `disc_bipartite_matching`'s Kuhn's
+      algorithm). New private helpers `_disc_hk_bfs`/`_disc_hk_dfs`.
+      `#[bounded(256)]` on the DFS recursion, same practical ceiling as
+      `_disc_bip_try_augment`'s. Cross-checked against
+      `disc_bipartite_matching` on two graphs (including a 3x3 "path"
+      structure admitting a perfect matching only via chained
+      augmentation), plus a per-edge validity check (every matched pair
+      is confirmed to be a real edge, not just a count that adds up).
+- [x] `disc_exact_coloring` -- exact (chromatic-number-optimal) graph
+      coloring via backtracking with forward-checking pruning, trying
+      k=1,2,... until a valid k-coloring exists. NP-hard/exponential
+      worst case -- practical only for small n (caller-trust, not
+      checked at runtime, same convention as every other unenforced
+      limit in this ecosystem). New private helper `_disc_color_try`,
+      `#[bounded(256)]` recursion (depth is exactly n). Verified against
+      `disc_greedy_coloring`'s same two test graphs, checking the actual
+      minimum color count: the 4-cycle's chromatic number is exactly 2
+      (bipartite), the triangle's is exactly 3 (odd cycle, provably not
+      2-colorable).
+- [x] Full suite + `vanic audit-safety` re-verified on both backends. No
+      unrelated WCET/stack drift found in this package.
+
 ## Future
 
 No v0.2.0 is currently planned. Candidates if a concrete need shows up:
 Tarjan's SCC (single-pass, avoids the transpose -- only worth it if
 Kosaraju's two-pass cost becomes a real bottleneck), Dinic's or
 push-relabel max-flow (better asymptotic complexity than Edmonds-Karp),
-Hopcroft-Karp bipartite matching, an exact/optimal graph coloring for
-small graphs (backtracking with pruning), and integer partition
-*enumeration* (not just counting) if a concrete use case shows up --
-deliberately deferred, see README's scope-decisions section.
+and integer partition *enumeration* (not just counting) if a concrete
+use case shows up -- deliberately deferred, see README's scope-decisions
+section.
