@@ -5,6 +5,8 @@ Graph algorithms and combinatorics enumeration library for the
 
 No Kosh dependencies -- v0.1.0 is a standalone package.
 
+**API reference / tutorial:** <https://enthusiasticgeek.github.io/vani-discrete/>
+
 ## Add to your project
 
 ```toml
