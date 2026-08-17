@@ -1,7 +1,7 @@
 # vani-discrete
 
 Graph algorithms and combinatorics enumeration library for the
-[vāṇी compiler](https://github.com/enthusiasticgeek/vani-compiler).
+[vāṇī compiler](https://github.com/enthusiasticgeek/vani-compiler).
 
 No Kosh dependencies -- v0.1.0 is a standalone package.
 
@@ -25,7 +25,7 @@ vanic build
 The compiler ships builtin graph functions (`graph_new`/`add_edge`/
 `bfs_reach`/`dijkstra`/`mst_kruskal`/`mst_prim`/`astar`/`topo_sort`, call
 these directly -- do not duplicate them here). But the builtin `Graph` type
-is **opaque** from vāṇी source: there's no accessor to enumerate a node's
+is **opaque** from vāṇī source: there's no accessor to enumerate a node's
 neighbors or list all edges, so algorithms beyond that fixed set (all-pairs
 shortest path, strongly-connected components, max-flow, bipartite matching,
 graph coloring) can't be built on top of it. This package uses its own flat
@@ -81,7 +81,7 @@ the compiler's own `i64_factorial`/`i64_binomial` builtins. See `tests/`.
 
 ## What this library does NOT provide
 
-These are already vāṇी compiler builtins — call them directly, no import needed:
+These are already vāṇī compiler builtins — call them directly, no import needed:
 
 `abs` `i64_test_bit` `i64_factorial` `i64_binomial` `f64_inf()`
 `push` `pop` `len` `set` `vec`

@@ -5,7 +5,7 @@
 > `push` `pop` `len` `set` `vec`
 >
 > Also already covered by the compiler's builtin `Graph` type (opaque from
-> vāṇी source, see README for why this package can't build on top of it):
+> vāṇī source, see README for why this package can't build on top of it):
 > `graph_new` `graph_add_edge` `graph_bfs_reach` `graph_dfs_reach`
 > `graph_dijkstra` `graph_has_cycle` `graph_mst_kruskal` `graph_mst_prim`
 > `graph_astar` `graph_topo_sort`

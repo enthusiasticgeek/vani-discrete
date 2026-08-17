@@ -1,6 +1,6 @@
 // vani-discrete  v0.1.0 — graph algorithms and combinatorics enumeration
 //
-// IMPORTANT — do NOT reimplement vāṇी compiler builtins.
+// IMPORTANT — do NOT reimplement vāṇī compiler builtins.
 // Already available as builtins (call directly, never redeclare here):
 //   abs  i64_test_bit  f64_inf()  push pop len set vec
 //
@@ -14,7 +14,7 @@
 // functions (i64_factorial/i64_binomial/i64_perm/i64_fibonacci).
 //
 // ENCODING — own adjacency-matrix representation, NOT the compiler's
-// builtin Graph type: the builtin Graph is opaque from vāṇी source (no
+// builtin Graph type: the builtin Graph is opaque from vāṇī source (no
 // accessor to enumerate a node's neighbors or list all edges), so
 // Floyd-Warshall/SCC/max-flow/bipartite-matching/coloring cannot be built
 // on top of it. This package uses a flat row-major Vec<f64> of size n*n
